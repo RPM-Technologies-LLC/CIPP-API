@@ -11,6 +11,27 @@ function Push-CIPPStandard {
 
     $Tenant = $Item.Tenant
     $Standard = $Item.Standard
+
+    # FUTURE USE - ZAC
+    # Grouped Conditional Access batch: deploy all of a tenant's CA templates in one sequential
+    # pass. Per-template rerun checks and standard-info context are handled inside the batch
+    # function, so we bypass the generic per-item dispatch below.
+    # if ($Item.BatchTemplates) {
+    #     $TemplateCount = @($Item.BatchTemplates).Count
+    #     Write-Information "Received Conditional Access batch for $Tenant with $TemplateCount template(s)."
+    #     Set-CippUserAgentContext -Source 'standard' -TemplateId $Item.TemplateId
+    #     $QueuedTime = if ($Item.QueuedTime) { [int64]$Item.QueuedTime } else { 0 }
+    #     try {
+    #         Invoke-CIPPCATemplateBatch -Tenant $Tenant -Templates $Item.BatchTemplates -QueuedTime $QueuedTime
+    #         Write-Information "Conditional Access batch completed for tenant $Tenant"
+    #     } catch {
+    #         Write-LogMessage -API 'Standards' -tenant $Tenant -message "Error running Conditional Access batch for tenant $Tenant - $($_.Exception.Message)" -sev Error -LogData (Get-CippException -Exception $_)
+    #         Write-Warning "Error running Conditional Access batch for tenant $Tenant - $($_.Exception.Message)"
+    #         throw $_.Exception.Message
+    #     }
+    #     return
+    # }
+
     $FunctionName = 'Invoke-CIPPStandard{0}' -f $Standard
 
     Write-Information "We'll be running $FunctionName"
@@ -46,12 +67,12 @@ function Push-CIPPStandard {
         return
     }
 
-    # Initialize AsyncLocal storage for thread-safe per-invocation context
-    # Uses $global: so Write-LogMessage (CIPPCore module) can read it across module boundaries
-    if (-not $global:CippStandardInfoStorage) {
-        $global:CippStandardInfoStorage = [System.Threading.AsyncLocal[object]]::new()
-    }
-    $global:CippStandardInfoStorage.Value = $StandardInfo
+    # Store standard info in CIPPCore module-scoped AsyncLocal storage so Write-LogMessage and
+    # Set-CIPPStandardsCompareField can read it - global vars are unreliable in Azure Functions
+    Set-CippStandardInfoContext -StandardInfo $StandardInfo
+
+    # Store action source + template id for outbound User-Agent attribution
+    Set-CippUserAgentContext -Source 'standard' -TemplateId $Item.TemplateId
 
     # ---- Standard execution telemetry ----
     $runId = [guid]::NewGuid().ToString()
@@ -131,8 +152,6 @@ function Push-CIPPStandard {
                 Error        = $err
             } | ConvertTo-Json -Compress)
 
-        if ($global:CippStandardInfoStorage) {
-            $global:CippStandardInfoStorage.Value = $null
-        }
+        Set-CippStandardInfoContext -StandardInfo $null
     }
 }

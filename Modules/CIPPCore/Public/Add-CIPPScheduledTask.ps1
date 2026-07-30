@@ -70,7 +70,7 @@ function Add-CIPPScheduledTask {
             $ImportedModules = [System.Collections.Generic.List[string]]::new()
             if (-not $Command) {
                 try {
-                    foreach ($SiblingModule in @('CIPPStandards', 'CIPPAlerts', 'CIPPTests', 'CIPPDB')) {
+                    foreach ($SiblingModule in @('CIPPStandards', 'CIPPAlerts', 'CIPPTests', 'CIPPDB', 'CippExtensions', 'CIPPActivityTriggers')) {
                         if (-not (Get-Module -Name $SiblingModule)) {
                             Import-Module $SiblingModule -ErrorAction SilentlyContinue
                             if (Get-Module -Name $SiblingModule) {
@@ -91,7 +91,7 @@ function Add-CIPPScheduledTask {
                 return "Error - The command '$RequestedCommand' does not exist and cannot be scheduled."
             }
 
-            if ($Command.Module -notin @('CIPPCore', 'CIPPAlerts', 'CIPPStandards', 'CIPPTests', 'CIPPDB')) {
+            if ($Command.Module -notin @('CIPPCore', 'CIPPAlerts', 'CIPPStandards', 'CIPPTests', 'CIPPDB', 'CippExtensions', 'CIPPActivityTriggers')) {
                 Write-LogMessage -headers $Headers -API 'ScheduledTask' -message "Blocked attempt to schedule command from unauthorized module: $($Command.ModuleName)\$RequestedCommand" -Sev 'Warning'
                 return "Error - The command '$RequestedCommand' is not permitted to run as a scheduled task."
             }
@@ -188,8 +188,15 @@ function Add-CIPPScheduledTask {
                     $task.ScheduledTime = [int64](([datetime]::UtcNow) - (Get-Date '1/1/1970')).TotalSeconds
                 }
             }
-            $excludedTenants = if ($task.excludedTenants.value) {
-                $task.excludedTenants.value -join ','
+            # Split exclusions by type (same pattern as Tenant/TenantGroup): plain tenants are
+            # comma-joined, groups are stored as JSON and expanded at runtime by the orchestrator
+            $ExcludedEntries = @($task.excludedTenants | Where-Object { $_.value })
+            $excludedTenants = @($ExcludedEntries | Where-Object { $_.type -ne 'Group' }).value -join ','
+            $ExcludedGroupEntries = @($ExcludedEntries | Where-Object { $_.type -eq 'Group' } | ForEach-Object {
+                    [PSCustomObject]@{ value = $_.value; label = $_.label; type = 'Group' }
+                })
+            $excludedTenantGroups = if ($ExcludedGroupEntries.Count -gt 0) {
+                ConvertTo-Json -InputObject $ExcludedGroupEntries -Compress -Depth 5
             }
 
             # Handle tenant filter - support both single tenant and tenant groups
@@ -222,6 +229,7 @@ function Add-CIPPScheduledTask {
                 RowKey               = [string]$RowKey
                 Tenant               = [string]$tenantFilter
                 excludedTenants      = [string]$excludedTenants
+                excludedTenantGroups = [string]$excludedTenantGroups
                 Name                 = [string]$task.Name
                 Command              = [string]$RequestedCommand
                 Parameters           = [string]$Parameters
@@ -234,6 +242,7 @@ function Add-CIPPScheduledTask {
                 Results              = 'Planned'
                 AlertComment         = [string]$task.AlertComment
                 CustomSubject        = [string]$task.CustomSubject
+                PsaTicketStrategy    = [string]($task.PsaTicketStrategy.value ?? $task.PsaTicketStrategy)
             }
 
 

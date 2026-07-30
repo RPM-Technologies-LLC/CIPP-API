@@ -107,10 +107,10 @@ function Invoke-ExecCommunityRepo {
         'UploadTemplate' {
             $GUID = $Request.Body.GUID
             $TemplateTable = Get-CIPPTable -TableName templates
-            $TemplateEntity = Get-CIPPAzDataTableEntity @TemplateTable -Filter "RowKey eq '$($GUID)'" | Select-Object -ExcludeProperty ETag, Timestamp
+            $TemplateEntity = Get-CIPPAzDataTableEntity @TemplateTable -Filter "RowKey eq '$($GUID)' or OriginalEntityId eq '$($GUID)'" | Select-Object -ExcludeProperty ETag, Timestamp
             $Branch = $RepoEntity.UploadBranch ?? $RepoEntity.DefaultBranch
             if ($TemplateEntity) {
-                $Template = $TemplateEntity.JSON | ConvertFrom-Json
+                $Template = $TemplateEntity.JSON | ConvertFrom-Json -Depth 100 -ErrorAction Stop
                 $DisplayName = $Template.Displayname ?? $Template.templateName ?? $Template.name
                 if ($Template.tenantFilter) {
                     $Template.tenantFilter = @(@{ label = 'Template Tenant'; value = 'Template Tenant' })
@@ -160,6 +160,7 @@ function Invoke-ExecCommunityRepo {
             $Path = $Request.Body.Path
             $FullName = $Request.Body.FullName
             $Branch = $Request.Body.Branch
+            $Force = [bool]$Request.Body.Force
             try {
                 $Template = Get-GitHubFileContents -FullName $FullName -Path $Path -Branch $Branch
 
@@ -178,7 +179,7 @@ function Invoke-ExecCommunityRepo {
                         (Get-GitHubFileContents -FullName $FullName -Branch $Branch -Path $Location.path).content | ConvertFrom-Json
                     }
                 }
-                $ImportResult = Import-CommunityTemplate -Template $Content -SHA $Template.sha -MigrationTable $MigrationTable -LocationData $LocationData -Source $FullName
+                $ImportResult = Import-CommunityTemplate -Template $Content -SHA $Template.sha -MigrationTable $MigrationTable -LocationData $LocationData -Source $FullName -Force:$Force
 
                 $Results = @{
                     resultText = $ImportResult ?? 'Template imported'
